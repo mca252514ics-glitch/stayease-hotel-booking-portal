@@ -1,0 +1,31 @@
+:root {
+  font-family: "DM Sans", sans-serif;
+  color: #202b27;
+  background: #fbfaf7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  scroll-behavior: smooth;
+  --ink: #24352e;
+  --muted: #77827b;
+  --green: #315c4b;
+  --green-dark: #234638;
+  --sage: #e9eee8;
+  --gold: #bd9160;
+  --paper: #fbfaf7;
+  --line: #e8e9e3;
+  --serif: "Playfair Display", Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 88px; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+a { color: inherit; }
+::selection { background: #dce8df; color: #234638; }
+:focus-visible { outline: 3px solid rgba(189, 145, 96, .8); outline-offset: 3px; }

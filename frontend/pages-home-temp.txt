@@ -1,0 +1,442 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, CheckCircle2,
+  Compass, MapPin, Search, ShieldCheck, Sparkles, X,
+} from "lucide-react";
+import api from "./services/api";
+import HotelCard from "./components/hotels/HotelCard";
+import BookingForm from "./components/booking/BookingForm";
+import BookingLookup from "./components/booking/BookingLookup";
+import OptimizedImage from "./components/common/OptimizedImage";
+import "./App.css";
+
+const getLocalToday = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+
+function App() {
+  const [hotels, setHotels] = useState([]);
+  const [location, setLocation] = useState("");
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+  const [selectedHotel, setSelectedHotel] = useState(null);
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [availability, setAvailability] = useState(null);
+  const [booking, setBooking] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [searchLabel, setSearchLabel] = useState("All stays");
+  const today = getLocalToday();
+
+  const resultCountLabel = useMemo(
+    () => `${hotels.length} ${hotels.length === 1 ? "stay" : "stays"} to explore`,
+    [hotels.length],
+  );
+
+  const fetchHotels = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await api.get("/hotels");
+      setHotels(response.data.data || []);
+      setSearchLabel("All stays");
+    } catch (err) {
+      setError(err.response?.data?.message || "We couldn't load hotels. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    api.get("/hotels")
+      .then((response) => {
+        if (active) {
+          setHotels(response.data.data || []);
+          setSearchLabel("All stays");
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err.response?.data?.message || "We couldn't load hotels. Please try again.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const clearSelection = () => {
+    setSelectedHotel(null);
+    setSelectedRoom(null);
+    setAvailability(null);
+    setBooking(null);
+  };
+
+  const searchHotels = async (event) => {
+    event.preventDefault();
+    if (checkIn && checkIn < today) {
+      setError("Check-in date cannot be in the past.");
+      return;
+    }
+    if (checkIn && checkOut && checkOut <= checkIn) {
+      setError("Check-out must be after check-in.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    clearSelection();
+    try {
+      const query = location.trim();
+      const response = query
+        ? await api.get("/hotels/search", { params: { location: query } })
+        : await api.get("/hotels");
+      setHotels(response.data.data || []);
+      setSearchLabel(query ? `Stays in ${query}` : "All stays");
+      document.getElementById("hotels")?.scrollIntoView({ behavior: "smooth" });
+    } catch (err) {
+      setError(err.response?.data?.message || "Hotel search failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showAllHotels = () => {
+    setLocation("");
+    clearSelection();
+    fetchHotels();
+    document.getElementById("hotels")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const selectHotel = async (hotel) => {
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    clearSelection();
+    try {
+      const response = await api.get(`/hotels/${hotel.hotel_id}`);
+      const details = response.data.data;
+      if (!details.rooms?.length) {
+        setError("There are no rooms listed for this hotel yet.");
+        return;
+      }
+      setSelectedHotel(details);
+      setSelectedRoom(details.rooms[0]);
+      window.setTimeout(() => document.getElementById("hotel-details")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+    } catch (err) {
+      setError(err.response?.data?.message || "Unable to load hotel details.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkAvailability = async (event) => {
+    event.preventDefault();
+    if (!selectedRoom) return;
+    if (!checkIn || !checkOut) {
+      setError("Choose your check-in and check-out dates first.");
+      return;
+    }
+    if (checkIn < today) {
+      setError("Check-in date cannot be in the past.");
+      return;
+    }
+    if (checkOut <= checkIn) {
+      setError("Check-out must be after check-in.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    setAvailability(null);
+    setBooking(null);
+    try {
+      const response = await api.get(`/rooms/${selectedRoom.id}/availability`, {
+        params: { checkIn, checkOut },
+      });
+      setAvailability(response.data.data);
+      window.setTimeout(() => document.getElementById("booking-area")?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    } catch (err) {
+      setError(err.response?.data?.message || "Unable to check availability.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmBooking = async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const payload = {
+      roomId: selectedRoom.id,
+      customerName: formData.get("customerName"),
+      email: formData.get("email"),
+      checkIn,
+      checkOut,
+    };
+
+    setBookingLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post("/bookings", payload);
+      setBooking(response.data.data);
+      setSuccess("Your stay is confirmed. Keep your reference number safe.");
+      form.reset();
+      const updated = await api.get(`/rooms/${selectedRoom.id}/availability`, {
+        params: { checkIn, checkOut },
+      });
+      setAvailability(updated.data.data);
+      window.setTimeout(() => document.getElementById("booking-confirmation")?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+    } catch (err) {
+      setError(err.response?.data?.message || "Booking failed. Please try again.");
+      try {
+        const updated = await api.get(`/rooms/${selectedRoom.id}/availability`, {
+          params: { checkIn, checkOut },
+        });
+        setAvailability(updated.data.data);
+      } catch {
+        // Keep the original booking error visible.
+      }
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
+  const chooseDestination = (destination) => {
+    setLocation(destination);
+    setError("");
+    clearSelection();
+    setLoading(true);
+    api.get("/hotels/search", { params: { location: destination } })
+      .then((response) => {
+        setHotels(response.data.data || []);
+        setSearchLabel(`Stays in ${destination}`);
+        document.getElementById("hotels")?.scrollIntoView({ behavior: "smooth" });
+      })
+      .catch((err) => setError(err.response?.data?.message || "Unable to search this destination."))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div className="site-shell">
+      <header className="site-header">
+        <a className="brand" href="#home" aria-label="StayEase home">
+          <span className="brand-mark"><Compass size={19} strokeWidth={2.2} /></span>
+          <span>stay<span className="brand-accent">ease</span></span>
+        </a>
+        <nav className="desktop-nav" aria-label="Main navigation">
+          <a href="#hotels">Explore stays</a>
+          <a href="#why-stayease">Why StayEase</a>
+          <a href="#my-booking">My booking</a>
+        </nav>
+        <a className="header-cta" href="#hotels">Find a stay <ArrowUpRight size={15} /></a>
+      </header>
+
+      <main id="home">
+        <section className="hero-section">
+          <div className="hero-image">
+            <OptimizedImage
+              src="https://images.unsplash.com/photo-1571896349842-33c89424de2d"
+              alt="A serene resort swimming pool surrounded by tropical greenery"
+              className="hero-photo"
+              width={1800}
+              priority
+            />
+          </div>
+          <div className="hero-overlay" />
+          <div className="hero-content page-container">
+            <div className="hero-copy">
+              <span className="hero-eyebrow"><Sparkles size={14} /> A better way to get away</span>
+              <h1>Find your place<br />in the <em>world.</em></h1>
+              <p>Thoughtful stays for the moments that matter. Discover somewhere lovely and make it yours.</p>
+            </div>
+
+            <form className="search-panel" onSubmit={searchHotels}>
+              <label className="search-field destination-field">
+                <span className="search-icon"><MapPin size={18} /></span>
+                <span className="search-field-copy">
+                  <span className="search-label">Destination</span>
+                  <input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Where are you going?" aria-label="Destination or city" />
+                </span>
+              </label>
+              <div className="search-divider" />
+              <label className="search-field">
+                <span className="search-icon"><CalendarDays size={18} /></span>
+                <span className="search-field-copy">
+                  <span className="search-label">Check in</span>
+                  <input type="date" min={today} value={checkIn} onChange={(event) => { setCheckIn(event.target.value); setAvailability(null); }} aria-label="Check-in date" />
+                </span>
+              </label>
+              <div className="search-divider" />
+              <label className="search-field">
+                <span className="search-icon"><CalendarDays size={18} /></span>
+                <span className="search-field-copy">
+                  <span className="search-label">Check out</span>
+                  <input type="date" min={checkIn || today} value={checkOut} onChange={(event) => { setCheckOut(event.target.value); setAvailability(null); }} aria-label="Check-out date" />
+                </span>
+              </label>
+              <button className="search-submit" type="submit" disabled={loading}>
+                <Search size={18} /> <span>Search stays</span>
+              </button>
+            </form>
+            <div className="hero-footnote"><ShieldCheck size={14} /> Simple booking · Clear pricing · No hidden fees</div>
+          </div>
+          <a href="#hotels" className="hero-scroll" aria-label="Scroll to explore stays"><ArrowDown size={17} /></a>
+        </section>
+
+        {error && (
+          <div className="page-container">
+            <div className="global-alert alert-error" role="alert">
+              <span>{error}</span>
+              <button type="button" onClick={() => setError("")} aria-label="Dismiss error"><X size={17} /></button>
+            </div>
+          </div>
+        )}
+        {success && (
+          <div className="page-container">
+            <div className="global-alert alert-success" role="status">
+              <CheckCircle2 size={17} /><span>{success}</span>
+              <button type="button" onClick={() => setSuccess("")} aria-label="Dismiss message"><X size={17} /></button>
+            </div>
+          </div>
+        )}
+
+        <section className="destinations-section page-container" aria-labelledby="destinations-title">
+          <div className="section-intro compact-intro">
+            <div><span className="section-kicker">A LITTLE INSPIRATION</span><h2 id="destinations-title">Where to next?</h2></div>
+            <p>Pick a place and let the getaway begin.</p>
+          </div>
+          <div className="destination-pills">
+            {["Goa", "Mumbai", "Manali", "Pune", "Jaipur"].map((place) => (
+              <button type="button" key={place} className={location.toLowerCase() === place.toLowerCase() ? "destination-pill active" : "destination-pill"} onClick={() => chooseDestination(place)}>
+                {place}<ArrowUpRight size={14} />
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="hotels-section page-container" id="hotels">
+          <div className="section-intro">
+            <div>
+              <span className="section-kicker">THE STAYEASE COLLECTION</span>
+              <h2>Stays worth slowing down for</h2>
+              <p className="section-subtitle">Places with a little something special, selected for your next escape.</p>
+            </div>
+            <button type="button" className="outline-button" onClick={showAllHotels}>View all stays <ArrowRight size={15} /></button>
+          </div>
+
+          <div className="results-toolbar">
+            <span>{searchLabel} <span className="results-count">· {resultCountLabel}</span></span>
+            {location && <button type="button" className="clear-filter" onClick={showAllHotels}>Clear destination <X size={13} /></button>}
+          </div>
+
+          {loading ? (
+            <div className="hotel-grid" aria-label="Loading hotels" aria-busy="true">
+              {Array.from({ length: 3 }).map((_, index) => <div className="hotel-skeleton" key={index}><div className="skeleton-image" /><div className="skeleton-lines"><i /><i /><i /></div></div>)}
+            </div>
+          ) : hotels.length > 0 ? (
+            <div className="hotel-grid">
+              {hotels.map((hotel, index) => <HotelCard key={hotel.hotel_id} hotel={hotel} onSelect={selectHotel} index={index} />)}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <span className="empty-icon"><Search size={22} /></span>
+              <h3>No stays found just yet</h3>
+              <p>Try another destination or browse all of our available stays.</p>
+              <button type="button" className="button button-primary" onClick={showAllHotels}>Explore all stays</button>
+            </div>
+          )}
+        </section>
+
+        {selectedHotel && selectedRoom && (
+          <section className="details-section" id="hotel-details">
+            <div className="page-container">
+              <div className="details-topline">
+                <span className="section-kicker">YOUR NEXT STAY</span>
+                <button className="close-details" type="button" onClick={clearSelection}><X size={15} /> Close details</button>
+              </div>
+              <div className="details-layout">
+                <div className="details-main">
+                  <div className="details-heading">
+                    <div><span className="hotel-location-label"><MapPin size={14} /> {selectedHotel.location}</span><h2>{selectedHotel.name}</h2></div>
+                    <p>{selectedHotel.description}</p>
+                  </div>
+                  <OptimizedImage src={selectedHotel.image_url} alt={`${selectedHotel.name} property`} className="details-photo" width={1200} />
+                  <div className="details-amenities">
+                    <h3>What this stay offers</h3>
+                    <div className="details-amenity-list">
+                      {(Array.isArray(selectedHotel.amenities) ? selectedHotel.amenities : []).map((amenity) => <span key={amenity}><CheckCircle2 size={15} /> {amenity}</span>)}
+                    </div>
+                  </div>
+                  <div className="room-selection-card">
+                    <div><span className="section-kicker">ROOM TYPE</span><h3>{selectedRoom.category}</h3><p>Comfortable space for a restful stay.</p></div>
+                    <div className="room-price"><strong>₹{Number(selectedRoom.price_per_night).toLocaleString("en-IN")}</strong><span>per night</span></div>
+                  </div>
+                </div>
+
+                <aside className="availability-card">
+                  <div className="availability-card-heading"><span className="section-kicker">PLAN YOUR STAY</span><h3>Make it a getaway.</h3><p>Choose your dates to see live room availability.</p></div>
+                  <form className="availability-form" onSubmit={checkAvailability}>
+                    <label className="field"><span>Check-in</span><input type="date" min={today} value={checkIn} onChange={(event) => { setCheckIn(event.target.value); setAvailability(null); setBooking(null); }} required /></label>
+                    <label className="field"><span>Check-out</span><input type="date" min={checkIn || today} value={checkOut} onChange={(event) => { setCheckOut(event.target.value); setAvailability(null); setBooking(null); }} required /></label>
+                    <button className="button button-primary button-wide" type="submit" disabled={loading}>{loading ? "Checking dates…" : <>Check availability <ArrowRight size={16} /></>}</button>
+                  </form>
+                  <p className="availability-reassurance"><ShieldCheck size={15} /> Your dates are checked against live bookings.</p>
+                </aside>
+              </div>
+
+              <div id="booking-area" className="booking-area">
+                <BookingForm hotel={selectedHotel} availability={availability} onBook={confirmBooking} loading={bookingLoading} />
+                {booking && (
+                  <div className="confirmation-card" id="booking-confirmation" role="status">
+                    <div className="confirmation-icon"><CheckCircle2 size={28} /></div>
+                    <span className="section-kicker">IT'S OFFICIAL</span>
+                    <h2>Your getaway is confirmed.</h2>
+                    <p>We've saved your reservation. Keep this reference handy to manage your booking.</p>
+                    <div className="confirmation-reference"><small>BOOKING REFERENCE</small><strong>{booking.booking_reference}</strong><button type="button" onClick={() => navigator.clipboard?.writeText(booking.booking_reference)}>Copy reference</button></div>
+                    <div className="confirmation-meta"><span>{booking.hotel_name}</span><strong>₹{Number(booking.total_amount).toLocaleString("en-IN")}</strong></div>
+                    <a href="#my-booking" className="button button-primary">Manage this booking <ArrowRight size={16} /></a>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section className="why-section page-container" id="why-stayease">
+          <div className="why-heading"><span className="section-kicker">THE STAYEASE DIFFERENCE</span><h2>Travel should feel<br /><em>effortless.</em></h2></div>
+          <div className="why-grid">
+            <article><span className="why-number">01</span><h3>Find your fit</h3><p>Explore stays by destination and discover the details that matter to you.</p></article>
+            <article><span className="why-number">02</span><h3>Know the total</h3><p>See your stay price upfront, calculated clearly for your selected dates.</p></article>
+            <article><span className="why-number">03</span><h3>Stay in control</h3><p>Retrieve your reservation and manage your booking whenever you need.</p></article>
+          </div>
+        </section>
+
+        <div className="page-container"><BookingLookup /></div>
+      </main>
+
+      <footer className="site-footer">
+        <div className="footer-main">
+          <a className="brand footer-brand" href="#home"><span className="brand-mark"><Compass size={18} /></span><span>stay<span className="brand-accent">ease</span></span></a>
+          <p>Find somewhere lovely. Make it yours.</p>
+          <a href="#home" className="back-to-top">Back to top <ArrowUpRight size={15} /></a>
+        </div>
+        <div className="footer-bottom"><span>© {new Date().getFullYear()} StayEase. Hotel Booking Portal.</span><span>Made for better getaways.</span></div>
+      </footer>
+    </div>
+  );
+}
+
+export default App;
